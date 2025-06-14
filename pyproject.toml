@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anki-mcp"
+version = "0.1.0"
+description = "MCP server for Anki card creation"
+authors = [
+    {name = "Anki MCP", email = "anki-mcp@example.com"}
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "apyanki>=0.15.0",
+]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+anki-mcp = "server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
