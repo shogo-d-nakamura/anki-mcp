@@ -127,8 +127,14 @@ def apply_highlight(text: str, highlight_words: List[str], color: Dict[str, int]
     # Apply highlighting to each word
     highlighted_text = text
     for word in highlight_words:
-        # Use word boundaries to avoid partial matches
-        pattern = rf'\b{re.escape(word)}\b'
+        # Check if word contains non-ASCII characters (like Japanese)
+        if any(ord(char) > 127 for char in word):
+            # For non-ASCII text (Japanese), use exact match without word boundaries
+            pattern = re.escape(word)
+        else:
+            # For ASCII text (English), use word boundaries to avoid partial matches
+            pattern = rf'\b{re.escape(word)}\b'
+        
         replacement = f'<span style="background-color: {hex_color}">{word}</span>'
         highlighted_text = re.sub(pattern, replacement, highlighted_text, flags=re.IGNORECASE)
     
