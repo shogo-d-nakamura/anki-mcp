@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    
+    "Anki-MCP": {
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-c",
+        "/home/usr/.local/bin/uv --directory /home/usr/anki-mcp run server.py"
+      ]
+    }
+  }
+}
