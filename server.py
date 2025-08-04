@@ -6,20 +6,95 @@ import logging
 import sys
 import json
 import re
+import os
+import subprocess
+import platform
 from typing import Any, Dict, List, Optional
 import urllib.request
-import urllib.parse
 import urllib.error
 
 # Logger configuration
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if os.environ.get('DEBUG', '').lower() == 'true' else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# AnkiConnect configuration
-ANKICONNECT_URL = "http://127.0.0.1:8765"
+def get_ankiconnect_url():
+    """Get AnkiConnect URL, handling different environments (WSL2, Ubuntu, macOS)"""
+    # First check if URL is explicitly set via environment variable
+    if 'ANKICONNECT_URL' in os.environ:
+        url = os.environ['ANKICONNECT_URL']
+        logger.info(f"Using ANKICONNECT_URL from environment: {url}")
+        return url
+    
+    # Detect the platform
+    system = platform.system()
+    
+    # Check if we're in WSL2
+    is_wsl = 'WSL_DISTRO_NAME' in os.environ or 'WSL_INTEROP' in os.environ
+    
+    if is_wsl:
+        logger.info("Detected WSL2 environment")
+        # In WSL2, try multiple approaches to connect to Windows host
+        
+        # Method 1: Use host.docker.internal (works in some WSL2 setups)
+        test_urls = [
+            "http://host.docker.internal:8765",
+            "http://172.17.0.1:8765",  # Common Docker bridge IP
+            "http://localhost:8765",    # Sometimes WSL2 forwards localhost
+        ]
+        
+        # Method 2: Try to get Windows host IP from various sources
+        try:
+            # Get IP from /etc/resolv.conf (WSL2 specific)
+            with open('/etc/resolv.conf', 'r') as f:
+                for line in f:
+                    if line.startswith('nameserver'):
+                        ip = line.split()[1]
+                        if ip != '127.0.0.1':
+                            test_urls.insert(0, f"http://{ip}:8765")
+                            break
+        except:
+            pass
+        
+        # Method 3: Try to get IP using ip route (Linux specific)
+        try:
+            result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                    capture_output=True, text=True, check=False)
+            if result.returncode == 0 and 'via' in result.stdout:
+                ip = result.stdout.split('via')[1].split()[0]
+                test_urls.insert(0, f"http://{ip}:8765")
+        except:
+            pass
+        
+        # Test each URL
+        import socket
+        for url in test_urls:
+            try:
+                host = url.replace("http://", "").split(":")[0]
+                port = 8765
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((host, port))
+                sock.close()
+                if result == 0:
+                    logger.info(f"AnkiConnect found at {url}")
+                    return url
+            except:
+                continue
+        
+        logger.warning("Could not connect to AnkiConnect from WSL2. Make sure:")
+        logger.warning("1. Anki is running on Windows with AnkiConnect enabled")
+        logger.warning("2. Windows Firewall allows connections from WSL2")
+        logger.warning("3. AnkiConnect is configured to accept connections from WSL2 IP range")
+        logger.warning("4. Set ANKICONNECT_URL environment variable to Windows host IP")
+    
+    # For native Linux/macOS, just use localhost
+    logger.info(f"Running on {system} - using localhost")
+    return "http://127.0.0.1:8765"
+
+ANKICONNECT_URL = get_ankiconnect_url()
 
 def ankiconnect_request(action: str, params: Optional[Dict] = None) -> Dict[str, Any]:
     """Send request to AnkiConnect"""
@@ -32,6 +107,14 @@ def ankiconnect_request(action: str, params: Optional[Dict] = None) -> Dict[str,
         "params": params
     }
     
+    # Add API key if configured
+    api_key = os.environ.get('ANKICONNECT_API_KEY')
+    if api_key:
+        request_data["key"] = api_key
+        logger.debug(f"Using API key: {api_key[:10]}...")
+    
+    logger.debug(f"Sending request to {ANKICONNECT_URL}: {action}")
+    
     try:
         request_json = json.dumps(request_data).encode('utf-8')
         request_obj = urllib.request.Request(ANKICONNECT_URL, request_json)
@@ -39,12 +122,16 @@ def ankiconnect_request(action: str, params: Optional[Dict] = None) -> Dict[str,
         response_data = json.loads(response.read().decode('utf-8'))
         
         if response_data.get('error'):
+            logger.error(f"AnkiConnect returned error: {response_data['error']}")
             raise Exception(f"AnkiConnect error: {response_data['error']}")
         
+        logger.debug(f"Request successful: {action}")
         return response_data
     except urllib.error.URLError as e:
-        raise Exception(f"Failed to connect to AnkiConnect. Make sure Anki is running with AnkiConnect add-on enabled. Error: {e}")
+        logger.error(f"Failed to connect to {ANKICONNECT_URL}: {e}")
+        raise Exception(f"Failed to connect to AnkiConnect at {ANKICONNECT_URL}. Make sure Anki is running with AnkiConnect add-on enabled. Error: {e}")
     except Exception as e:
+        logger.error(f"AnkiConnect request failed: {e}")
         raise Exception(f"AnkiConnect request failed: {e}")
 
 # Check for required module imports
@@ -413,10 +500,15 @@ def get_anki_info() -> Dict[str, Any]:
         }
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP server"""
     try:
         print("Starting MCP server for Anki card creation...", file=sys.stderr)
         mcp.run()
     except Exception as e:
         print(f"Server startup error: {str(e)}", file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
